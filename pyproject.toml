@@ -1,0 +1,35 @@
+[project]
+name = "spanish-pii-ner"
+version = "0.1.0"
+description = "Spanish PII NER baseline with QLoRA (RoBERTa-BNE + CoNLL-2002)"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    # Hugging Face stack may call torch.load on pickled checkpoints; upstream now requires >=2.6 for that path.
+    # Prefer repos with safetensors to avoid pickle weights entirely when possible.
+    "torch>=2.6.0,<3.0.0",
+    # transformers 5.x can hit torch/custom_op schema errors on some Windows stacks; stay on v4 for stability.
+    "transformers>=4.40.0,<5.0.0",
+    # datasets 4.x disables Hub dataset scripts; CoNLL-2002 still relies on the legacy loader path in v3.
+    "datasets>=2.19.0,<4.0.0",
+    "peft>=0.10.0",
+    "bitsandbytes>=0.43.0",
+    "accelerate>=0.29.0",
+    "seqeval>=1.2.2",
+    "evaluate>=0.4.0",
+    "scikit-learn>=1.4.0",
+    "numpy>=1.26.0,<3.0.0",
+    "pyyaml>=6.0.1",
+    "python-dotenv>=1.0.0",
+    "tqdm>=4.66.0",
+    "protobuf>=7.34.1",
+]
+
+# PyTorch CUDA wheels: cu121 tops out around torch 2.5.x on Windows; torch>=2.6 needs a newer CUDA stack (e.g. cu126).
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu126" }

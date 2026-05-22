@@ -1,0 +1,41 @@
+model:
+  # PlanTL-GOB-ES/roberta-base-bne currently ships only README on the Hub (no weights/tokenizer).
+  # Spanish BERT WWM cased is a stable alternative for this baseline.
+  base_model: "dccuchile/bert-base-spanish-wwm-cased"
+  num_labels: 9  # B-PER, I-PER, B-ORG, I-ORG, B-LOC, I-LOC, B-MISC, I-MISC, O
+
+dataset:
+  name: "conll2002"
+  language: "es"
+  max_length: 256
+
+qlora:
+  r: 16
+  lora_alpha: 32
+  lora_dropout: 0.1
+  target_modules: ["query", "value"]
+  bias: "none"
+  task_type: "TOKEN_CLS"
+
+quantization:
+  load_in_4bit: true
+  bnb_4bit_compute_dtype: "float16"
+  bnb_4bit_quant_type: "nf4"
+  bnb_4bit_use_double_quant: true
+
+training:
+  output_dir: "./outputs"
+  num_train_epochs: 20
+  per_device_train_batch_size: 16
+  per_device_eval_batch_size: 32
+  learning_rate: 2e-4
+  weight_decay: 0.01
+  warmup_ratio: 0.1
+  lr_scheduler_type: "cosine"
+  evaluation_strategy: "epoch"
+  save_strategy: "epoch"
+  load_best_model_at_end: true
+  metric_for_best_model: "f1"
+  fp16: true
+  logging_steps: 50
+  seed: 42
