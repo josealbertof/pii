@@ -90,3 +90,50 @@ def load_quantized_model(config: Mapping[str, Any]) -> Tuple[PreTrainedModel, Pr
     model = get_peft_model(model, lora_config)
     model.print_trainable_parameters()
     return model, tokenizer
+
+
+def load_model(
+    config: Mapping[str, Any],
+    *,
+    torch_dtype: torch.dtype | None = None,
+) -> Tuple[PreTrainedModel, PreTrainedTokenizerBase]:
+    """Load a token classification model for full fine-tuning (no quantization or LoRA).
+
+    Prefer leaving ``torch_dtype`` unset (FP32). When using Hugging Face Trainer with
+    ``fp16=True``, weights must stay in FP32 so AMP can scale gradients correctly.
+    """
+    model_cfg = config["model"]
+    tokenizer = load_tokenizer(config)
+
+    label_list = get_label_list()
+    expected = int(model_cfg["num_labels"])
+    if len(label_list) != expected:
+        raise ValueError(
+            f"model.num_labels ({expected}) must match len(get_label_list()) ({len(label_list)})."
+        )
+
+    label2id: Dict[str, int] = {label: idx for idx, label in enumerate(label_list)}
+    id2label: Dict[int, str] = {idx: label for label, idx in label2id.items()}
+
+    load_kwargs: Dict[str, Any] = {
+        "num_labels": expected,
+        "id2label": id2label,
+        "label2id": label2id,
+    }
+    if torch_dtype is not None:
+        load_kwargs["torch_dtype"] = torch_dtype
+
+    model = AutoModelForTokenClassification.from_pretrained(
+        model_cfg["base_model"],
+        **load_kwargs,
+    )
+
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    total = sum(p.numel() for p in model.parameters())
+    logger.info(
+        "Trainable params: %s / %s (%.2f%%)",
+        f"{trainable:,}",
+        f"{total:,}",
+        100.0 * trainable / total if total else 0.0,
+    )
+    return model, tokenizer

@@ -10,6 +10,7 @@ import torch
 import yaml
 from peft import PeftModel
 from transformers import (
+    AutoConfig,
     AutoModelForTokenClassification,
     DataCollatorForTokenClassification,
     Trainer,
@@ -17,7 +18,7 @@ from transformers import (
 )
 
 from dataset import get_label_list, prepare_datasets
-from model import load_quantized_model
+from model import load_quantized_model, load_tokenizer
 from ner_eval import compute_metrics_builder
 
 logger = logging.getLogger(__name__)
@@ -70,6 +71,14 @@ def _parse_cli_args(default_config_path: Path) -> argparse.Namespace:
             f"(actualmente en el predeterminado: {training_defaults['fp16']})."
         ),
     )
+    parser.add_argument(
+        "--scratch",
+        action="store_true",
+        help=(
+            "Inicializa el modelo desde la arquitectura del modelo base (sin pesos preentrenados). "
+            "No usa QLoRA en este modo."
+        ),
+    )
 
     return parser.parse_args()
 
@@ -97,7 +106,14 @@ def main() -> None:
         config_path,
     )
 
-    model, tokenizer = load_quantized_model(config)
+    if cli.scratch:
+        tokenizer = load_tokenizer(config)
+        model_config = AutoConfig.from_pretrained(model_cfg["base_model"])
+        model_config.num_labels = int(model_cfg["num_labels"])
+        model = AutoModelForTokenClassification.from_config(model_config)
+        logger.info("Using scratch init: model created from base architecture config with random weights.")
+    else:
+        model, tokenizer = load_quantized_model(config)
     datasets = prepare_datasets(tokenizer, config)
 
     labels = get_label_list()
@@ -105,6 +121,8 @@ def main() -> None:
     compute_metrics = compute_metrics_builder(id2label)
 
     label2id: Dict[str, int] = {label: idx for idx, label in enumerate(labels)}
+    model.config.id2label = id2label
+    model.config.label2id = label2id
 
     training_kwargs: Dict[str, Any] = {
         "output_dir": output_dir,
@@ -150,24 +168,33 @@ def main() -> None:
 
     merged_dir = os.path.join(output_dir, "merged_fp16_model")
     os.makedirs(merged_dir, exist_ok=True)
-    torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
-    num_labels = int(model_cfg["num_labels"])
-    logger.info(
-        "Merging LoRA into full-precision weights for quantization/eval artifacts → %s",
-        merged_dir,
-    )
-    base_for_merge = AutoModelForTokenClassification.from_pretrained(
-        model_cfg["base_model"],
-        num_labels=num_labels,
-        id2label=id2label,
-        label2id=label2id,
-        torch_dtype=torch_dtype,
-    )
-    peft_bundle = PeftModel.from_pretrained(base_for_merge, best_dir)
-    merged_model = peft_bundle.merge_and_unload()
-    merged_model.save_pretrained(merged_dir)
-    tokenizer.save_pretrained(merged_dir)
-    logger.info("Merged model saved under %s (use scripts/quantize or evaluate from here).", merged_dir)
+    if cli.scratch:
+        logger.info(
+            "Scratch mode enabled: saving full model directly to %s (no LoRA merge).",
+            merged_dir,
+        )
+        trainer.model.save_pretrained(merged_dir)
+        tokenizer.save_pretrained(merged_dir)
+    else:
+        torch_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+        num_labels = int(model_cfg["num_labels"])
+        logger.info(
+            "Merging LoRA into full-precision weights for quantization/eval artifacts → %s",
+            merged_dir,
+        )
+        base_for_merge = AutoModelForTokenClassification.from_pretrained(
+            model_cfg["base_model"],
+            num_labels=num_labels,
+            id2label=id2label,
+            label2id=label2id,
+            torch_dtype=torch_dtype,
+        )
+        peft_bundle = PeftModel.from_pretrained(base_for_merge, best_dir)
+        merged_model = peft_bundle.merge_and_unload()
+        merged_model.save_pretrained(merged_dir)
+        tokenizer.save_pretrained(merged_dir)
+
+    logger.info("Merged/export model saved under %s (use scripts/quantize or evaluate from here).", merged_dir)
 
     best_f1 = getattr(trainer.state, "best_metric", None)
     logger.info("Training complete.")

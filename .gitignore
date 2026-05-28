@@ -11,3 +11,4 @@ wandb/
 
 uv.lock
 .env
+outputs_full/
